@@ -221,8 +221,6 @@ export function createClawTraceService(api) {
         return;
       }
 
-      const bind = cfg.bind || "127.0.0.1";
-      const port = cfg.port || 19099;
       const prefix = (cfg.pathPrefix || "/ledger").replace(/\/$/, "");
       const workspaceDir = ctx.workspaceDir || process.cwd();
       const openclawDir = ctx.openclawDir || path.join(process.env.HOME || "/tmp", ".openclaw");

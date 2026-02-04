@@ -1,5 +1,6 @@
 {
-  "id": "clawtrace", 
+  "id": "clawtrace",
+  "version": "0.1.0",
   "name": "ClawTrace",
   "description": "Real-time, redacted tool/action audit dashboard for OpenClaw",
   "configSchema": {
@@ -7,8 +8,6 @@
     "additionalProperties": false,
     "properties": {
       "enabled": { "type": "boolean", "default": true },
-      "bind": { "type": "string", "default": "127.0.0.1" },
-      "port": { "type": "number", "default": 19099 },
       "pathPrefix": { "type": "string", "default": "/ledger" },
       "ledgerPath": { "type": "string" },
       "maxString": { "type": "number", "default": 160 },
@@ -19,8 +18,6 @@
   },
   "uiHints": {
     "enabled": { "label": "Enable ClawTrace" },
-    "bind": { "label": "Bind host", "placeholder": "127.0.0.1" },
-    "port": { "label": "Port", "placeholder": "19099" },
     "pathPrefix": { "label": "HTTP path prefix", "placeholder": "/ledger" },
     "ledgerPath": { "label": "Ledger file path", "placeholder": "<workspace>/memory/clawtrace.jsonl" },
     "maxString": { "label": "Max string length (redaction)" },
