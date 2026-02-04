@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ClawTrace</title>
+  <style>
+    :root {
+      /* Pastel-ish dark theme */
+      --bg: #0b1020;
+      --panel: #111a33;
+      --text: #e9eefb;
+      --muted: #a3b3d6;
+      --green: #7ee2b8;
+      --red: #ff9aa2;
+      --border: rgba(150, 180, 255, 0.18);
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Helvetica Neue", "Noto Sans", "Liberation Sans", sans-serif;
+    }
+
+    body { margin:0; background: var(--bg); color: var(--text); font-family: var(--sans); }
+
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      display:flex;
+      align-items:center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 12px;
+      background: rgba(11,16,32,.88);
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(10px);
+    }
+
+    header .title { font-size: 13px; font-weight: 600; }
+
+    .status {
+      display:flex;
+      align-items:center;
+      gap: 10px;
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 100px;
+      background: var(--red);
+      box-shadow: 0 0 0 2px rgba(248, 81, 73, 0.18);
+    }
+
+    .dot.ok {
+      background: var(--green);
+      box-shadow: 0 0 0 2px rgba(63, 185, 80, 0.18);
+    }
+
+    .controls { display:flex; align-items:center; gap: 8px; }
+
+    button, select {
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--text);
+      font-size: 12px;
+      padding: 6px 10px;
+      border-radius: 8px;
+    }
+
+    button { cursor: pointer; }
+    button:hover, select:hover { border-color: #2c3e55; }
+
+    main { padding: 10px 12px 16px; }
+
+    #log {
+      font-family: var(--mono);
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      line-height: 1.35;
+      font-size: 12px;
+      min-height: calc(100vh - 80px);
+    }
+
+    .line { display:block; padding: 2px 0; border-bottom: 1px dashed rgba(34,48,66,.35); }
+    .line:last-child { border-bottom: none; }
+
+    .ts { color: var(--muted); }
+
+    /* Session label (agent/channel/target) */
+    .session { color: #c9d1d9; }
+    .session .muted { color: #6b7280; }
+    .session .agent, .session .chan { font-weight: 700; }
+    .session .target { color: #d1d5db; }
+
+    /* Agent palette */
+    .session .a-pi { color: #a78bfa; }
+
+    /* Channel palette */
+    .session .c-telegram { color: #60a5fa; }
+    .session .c-cron { color: #f59e0b; }
+
+    /* Tool colors */
+    .tool { color: #9ad1ff; }
+    .tool.exec { color: #ffd6a5; }
+    .tool.read { color: #bde0fe; }
+    .tool.write { color: #caffbf; }
+    .tool.edit { color: #cdb4db; }
+    .tool.message { color: #ffc6ff; }
+    .tool.browser { color: #fdffb6; }
+    .tool.cron { color: #bdb2ff; }
+    .tool.sessions_list, .tool.sessions_history, .tool.session_status { color: #8be9fd; }
+
+    .ok { color: var(--green); }
+    .err { color: var(--red); }
+    .summary { color: var(--text); }
+
+    .note { color: #f0c674; }
+  </style>
+</head>
+<body>
+<header>
+  <div class="title">ClawTrace</div>
+  <div class="status">
+    <span class="dot" id="dot"></span>
+    <span id="conn">disconnected</span>
+    <span>•</span>
+    <span id="count">0</span>
+    <span>lines</span>
+  </div>
+  <div class="controls">
+    <select id="sessionFilter" title="Filter by session">
+      <option value="__all__">All sessions</option>
+    </select>
+    <button id="exportBtn" title="Download the full ClawTrace JSONL">Export JSONL</button>
+    <button id="pauseBtn">Pause</button>
+    <button id="clearBtn">Clear</button>
+    <button id="bottomBtn">Bottom</button>
+  </div>
+</header>
+
+<main>
+  <div id="log"></div>
+</main>
+
+<script>
+  const logEl = document.getElementById('log');
+  const dotEl = document.getElementById('dot');
+  const connEl = document.getElementById('conn');
+  const countEl = document.getElementById('count');
+  const exportBtn = document.getElementById('exportBtn');
+  const pauseBtn = document.getElementById('pauseBtn');
+  const clearBtn = document.getElementById('clearBtn');
+  const bottomBtn = document.getElementById('bottomBtn');
+  const sessionFilter = document.getElementById('sessionFilter');
+
+  let paused = false;
+  let lineCount = 0;
+  let currentFilter = '__all__';
+
+  // cache recent items for filtering
+  const items = []; // { entry, key }
+  const knownSessions = new Set();
+
+  // dedup: collapse start+done into a single line when possible
+  const inflight = new Map(); // key -> { el, ts }
+
+  function dedupKey(entry) {
+    return entry.fingerprint || `${sessionKey(entry)}|${entry.tool}|${entry.summary}`;
+  }
+
+  function basePath() {
+    const p = window.location.pathname.replace(/\/+$/, '');
+    return p || '/ledger';
+  }
+
+  function setConnected(ok) {
+    dotEl.classList.toggle('ok', ok);
+    connEl.textContent = ok ? 'connected' : 'disconnected';
+  }
+
+  function escapeHtml(s) {
+    return String(s)
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#039;');
+  }
+
+  function sessionKey(entry) {
+    return entry?.session?.key || entry?.session?.id || '';
+  }
+
+  function sessionLabel(entry) {
+    const rawLabel = entry?.session?.label || '';
+    let label = String(rawLabel).replace(/\s+id:\d+\b/g, '');
+    if ((entry?.session?.channel || '') === 'cron') label = label.replace(/^cron:/, '');
+    const sid = entry?.session?.id;
+    const short = sid ? sid.slice(0, 8) + '…' : '';
+
+    const agentName = entry?.agent?.name || entry?.agent?.id || '';
+    const channel = entry?.session?.channel || ''; // may be absent
+
+    if (agentName && channel && label) return `${agentName}@${channel} → ${label}`;
+    if (agentName && label) return `${agentName} → ${label}`;
+
+    if (label && short) return `${label} (${short})`;
+    if (label) return label;
+    if (short) return `session:${short}`;
+    return '';
+  }
+
+  function sessionHtml(entry) {
+    const rawLabel = entry?.session?.label || '';
+    let label = String(rawLabel).replace(/\s+id:\d+\b/g, '');
+    const channel = (entry?.session?.channel || '');
+    if (channel === 'cron') label = label.replace(/^cron:/, '');
+
+    const agentName = (entry?.agent?.name || entry?.agent?.id || '').trim();
+
+    const aClass = agentName ? `agent a-${agentName.toLowerCase().replace(/[^a-z0-9]+/g,'-')}` : 'agent';
+    const cClass = channel ? `chan c-${channel.toLowerCase().replace(/[^a-z0-9]+/g,'-')}` : 'chan';
+
+    if (agentName && channel && label) {
+      return `<span class="${aClass}">${escapeHtml(agentName)}</span><span class="muted">@</span><span class="${cClass}">${escapeHtml(channel)}</span> <span class="muted">→</span> <span class="target">${escapeHtml(label)}</span>`;
+    }
+    if (agentName && label) {
+      return `<span class="${aClass}">${escapeHtml(agentName)}</span> <span class="muted">→</span> <span class="target">${escapeHtml(label)}</span>`;
+    }
+    const plain = sessionLabel(entry);
+    return plain ? escapeHtml(plain) : '';
+  }
+
+  function ensureSessionOption(entry) {
+    const key = sessionKey(entry);
+    if (!key) return;
+    if (knownSessions.has(key)) return;
+    knownSessions.add(key);
+    const opt = document.createElement('option');
+    opt.value = key;
+    opt.textContent = sessionLabel(entry) || key;
+    sessionFilter.appendChild(opt);
+  }
+
+  function renderLine(entry) {
+    const ts = entry.ts || '';
+    const tool = entry.tool || '';
+    const summary = entry.summary || '';
+    const phase = entry.phase || '';
+    const ok = entry?.details?.result !== 'error';
+
+    const parts = [];
+    parts.push(`<span class="ts">[${escapeHtml(ts)}]</span>`);
+    const sh = sessionHtml(entry);
+    if (sh) parts.push(`<span class="session">{${sh}}</span>`);
+
+    if (tool === 'note') {
+      parts.push(`<span class="note">${escapeHtml(summary)}</span>`);
+      return parts.join(' ');
+    }
+
+    const toolClass = `tool ${escapeHtml(tool)}`;
+    parts.push(`<span class="${toolClass}">${escapeHtml(tool)}</span>`);
+
+    // keep phase if present
+    if (phase) parts.push(`<span class="ts">${escapeHtml(phase)}</span>`);
+
+    if (summary) parts.push(`<span class="summary">${escapeHtml(summary)}</span>`);
+
+    // duration
+    const d = entry?.details?.durationMs;
+    if (typeof d === 'number' && d >= 0) parts.push(`<span class="ts">(${d}ms)</span>`);
+
+    parts.push(ok ? `<span class="ok">✓</span>` : `<span class="err">✗</span>`);
+    return parts.join(' ');
+  }
+
+  function addDomLine(html) {
+    const span = document.createElement('span');
+    span.className = 'line';
+    span.innerHTML = html;
+    logEl.appendChild(span);
+    return span;
+  }
+
+  function currentMatches(entry) {
+    const key = sessionKey(entry);
+    return currentFilter === '__all__' || key === currentFilter;
+  }
+
+  function rerender() {
+    logEl.innerHTML = '';
+    lineCount = 0;
+    inflight.clear();
+
+    for (const it of items) {
+      if (!currentMatches(it.entry)) continue;
+      const el = addDomLine(renderLine(it.entry));
+      lineCount++;
+      if (it.entry.phase === 'start') {
+        inflight.set(dedupKey(it.entry), { el, ts: Date.now() });
+      }
+    }
+    countEl.textContent = String(lineCount);
+    window.scrollTo({ top: document.body.scrollHeight });
+  }
+
+  function pushEntry(entry) {
+    ensureSessionOption(entry);
+
+    // Keep last ~1500
+    items.push({ entry });
+    while (items.length > 1500) items.shift();
+
+    if (paused) return;
+
+    // Dedup start/done: if we see a done that matches a recent start, replace the start line.
+    const key = dedupKey(entry);
+
+    if (!currentMatches(entry)) return;
+
+    if (entry.phase === 'done') {
+      const st = inflight.get(key);
+      if (st && (Date.now() - st.ts) < 30000) {
+        st.el.innerHTML = renderLine(entry);
+        inflight.delete(key);
+        return;
+      }
+    }
+
+    const el = addDomLine(renderLine(entry));
+    lineCount++;
+
+    if (entry.phase === 'start') {
+      inflight.set(key, { el, ts: Date.now() });
+    }
+    while (logEl.childNodes.length > 1500) {
+      logEl.removeChild(logEl.firstChild);
+      lineCount--;
+      // in-flight map may now reference removed elements; safest is to clear and rebuild on next filter change/reload.
+      if (inflight.size) inflight.clear();
+    }
+    countEl.textContent = String(lineCount);
+    window.scrollTo({ top: document.body.scrollHeight });
+  }
+
+  async function loadRecent() {
+    const res = await fetch(basePath() + '/api/recent?n=300');
+    const data = await res.json();
+    items.length = 0;
+    knownSessions.clear();
+    inflight.clear();
+    sessionFilter.innerHTML = '<option value="__all__">All sessions</option>';
+
+    logEl.innerHTML = '';
+    lineCount = 0;
+
+    (data.lines || []).forEach(line => {
+      try {
+        const entry = JSON.parse(line);
+        pushEntry(entry);
+      } catch {
+        // ignore
+      }
+    });
+    // If filtered, rerender from cache
+    rerender();
+  }
+
+  sessionFilter.addEventListener('change', () => {
+    currentFilter = sessionFilter.value;
+    rerender();
+  });
+
+  pauseBtn.addEventListener('click', () => {
+    paused = !paused;
+    pauseBtn.textContent = paused ? 'Resume' : 'Pause';
+    if (!paused) rerender();
+  });
+
+  clearBtn.addEventListener('click', () => {
+    items.length = 0;
+    inflight.clear();
+    logEl.innerHTML = '';
+    lineCount = 0;
+    countEl.textContent = '0';
+  });
+
+  exportBtn.addEventListener('click', () => {
+    // Direct download (full file)
+    window.location.href = basePath() + '/api/export';
+  });
+
+  bottomBtn.addEventListener('click', () => {
+    window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+  });
+
+  // Boot
+  loadRecent().catch(() => {});
+
+  const es = new EventSource(basePath() + '/events');
+  es.addEventListener('open', () => setConnected(true));
+  es.addEventListener('error', () => setConnected(false));
+  es.addEventListener('hello', () => setConnected(true));
+  es.addEventListener('line', (ev) => {
+    try {
+      const entry = typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data;
+      pushEntry(entry);
+    } catch {}
+  });
+</script>
+</body>
+</html>

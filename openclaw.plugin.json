@@ -1,0 +1,30 @@
+{
+  "id": "clawtrace", 
+  "name": "ClawTrace",
+  "description": "Real-time, redacted tool/action audit dashboard for OpenClaw",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": { "type": "boolean", "default": true },
+      "bind": { "type": "string", "default": "127.0.0.1" },
+      "port": { "type": "number", "default": 19099 },
+      "pathPrefix": { "type": "string", "default": "/ledger" },
+      "ledgerPath": { "type": "string" },
+      "maxString": { "type": "number", "default": 160 },
+      "dropKeysRegex": { "type": "string", "default": "(token|secret|password|authorization|cookie|apiKey|apikey|bearer|accessToken|refreshToken|privateKey)" },
+      "enableNotes": { "type": "boolean", "default": true },
+      "agentName": { "type": "string", "description": "Display name for the agent in ledger entries" }
+    }
+  },
+  "uiHints": {
+    "enabled": { "label": "Enable ClawTrace" },
+    "bind": { "label": "Bind host", "placeholder": "127.0.0.1" },
+    "port": { "label": "Port", "placeholder": "19099" },
+    "pathPrefix": { "label": "HTTP path prefix", "placeholder": "/ledger" },
+    "ledgerPath": { "label": "Ledger file path", "placeholder": "<workspace>/memory/clawtrace.jsonl" },
+    "maxString": { "label": "Max string length (redaction)" },
+    "dropKeysRegex": { "label": "Drop keys regex", "sensitive": true },
+    "agentName": { "label": "Agent display name", "placeholder": "main" }
+  }
+}

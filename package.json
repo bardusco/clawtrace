@@ -1,0 +1,22 @@
+{
+  "name": "clawtrace",
+  "version": "0.1.0",
+  "description": "Real-time action audit dashboard for OpenClaw - captures and displays tool calls with auto-redaction",
+  "author": "Danilo Bardusco",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bardusco/clawtrace"
+  },
+  "keywords": [
+    "openclaw",
+    "plugin",
+    "audit",
+    "dashboard",
+    "monitoring"
+  ],
+  "openclaw": {
+    "extensions": ["./index.ts"]
+  }
+}
